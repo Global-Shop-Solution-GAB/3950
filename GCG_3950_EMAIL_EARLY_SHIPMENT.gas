@@ -1,0 +1,192 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.Global.sCfgFile.Declare(String)
+Variable.Global.sFromEmail.Declare(String)
+Variable.Global.sFromName.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.bExists.Declare(Boolean)
+'Coded by SFF 6/15/2015
+'Event Auto Emailer, it will notify the Salesperson(From Sales Order Header) via Email if a shipment was sent before Due Date.
+'If NO email address is on File for the Sales Rep, an email will NOT be sent.
+'Default From Email address is maintained manually in Global\FILES\early_shipments.cfg file
+
+F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass,72000)
+
+'Check for Valid early_shipments.cfg file
+F.Intrinsic.String.Build("{0}\3950_early_shipments.cfg",V.Caller.FilesDir,V.Global.sCfgFile)
+F.Intrinsic.File.Exists(V.Global.sCfgFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,False)
+	F.Intrinsic.UI.Msgbox("Early Shipments Configuration File Does NOT Exist, See Project Description For Maintaining Configuration File","Configuration File Does NOT Exist")
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.Else
+	F.Intrinsic.File.File2String(V.Global.sCfgFile,V.Global.sCfgFile)
+	'Format = John Smith:jsmith@company.com
+	F.Intrinsic.String.Split(V.Global.sCfgFile,":",V.Global.sCfgFile)
+	F.Intrinsic.Control.If(V.Global.sCfgFile.UBound,<>,1)
+		F.Intrinsic.UI.Msgbox("Early Shipments Configuration File Does NOT contain Valid Email Credentials","Email Configuration File Invalid")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.Else
+		'Format = John Smith:jsmith@company.com
+		V.Global.sFromEmail.Set(V.Global.sCfgFile(1).Trim)
+		V.Global.sFromName.Set(V.Global.sCfgFile(0).Trim)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+'Post Save Hook Shipment Screen
+F.Intrinsic.Control.If(V.Caller.Hook,=,28532)
+	'Send Email
+	F.Intrinsic.Control.CallSub(Getorderinfo)
+F.Intrinsic.Control.EndIf
+
+'End Program
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3950_EMAIL_EARLY_SHIPMENT.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.GetOrderInfo.Start
+F.Intrinsic.Control.SetErrorHandler("GetOrderInfo_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+'Get Sales Order info and determine if Shipment Date is before Due Date.
+'If it is before Due Date then Send Email
+V.Local.sRet.Declare(String)
+V.Local.i.Declare(Float)
+V.local.bStatus.Declare(Boolean)
+V.local.sSql.Declare(String)
+V.local.iRet.Declare(Float)
+V.Local.PCK_NO.Declare(String)
+
+'Format for Pervasive SQL
+F.Intrinsic.String.Format(V.Ambient.Date,"YYYY-MM-DD",V.Local.sRet)
+
+'Pad to 7 char for table
+F.Intrinsic.String.LPad(V.Passed.000168,"0",7,V.Local.PCK_NO)
+
+F.Intrinsic.String.Build("Select * from V_SHIPMENT_HEADER where PCK_NO = '{0}' and DATE_SHIPPED < DATE_DUE",V.Local.PCK_NO,V.Local.sSql)
+F.ODBC.Connection!conX.OpenRecordsetRO("rst",V.Local.sSql)
+F.Intrinsic.Control.If(V.ODBC.conX!rst.EOF,<>,True)
+	'If there is a record returned, that means that order was shipped before due date so continue.
+	F.Intrinsic.Control.DoUntil(V.ODBC.conX!rst.EOF,=,True)
+			'Get Salesperson ID and Get Email address
+			F.Intrinsic.String.Build("Select a.ORDER_NO,a.CUSTOMER,a.SALESPERSON,b.NAME_CUSTOMER from v_ORDER_HEADER a left outer join v_CUSTOMER_MASTER b on a.CUSTOMER = b.CUSTOMER where a.ORDER_NO = '{0}'",V.ODBC.conX!rst.FieldVal!ORDER_NO,V.Local.sSql)
+			F.ODBC.Connection!conX.OpenRecordsetRO("rst2",V.Local.sSql)
+			F.Intrinsic.Control.If(V.ODBC.conX!rst2.EOF,<>,True)
+				'Get Email
+				F.Intrinsic.String.Build("Select EMAIL from v_SALESPERSONS where ID = '{0}'",V.ODBC.conX!rst2.FieldValTrim!SALESPERSON,V.Local.sSql)
+				F.ODBC.Connection!conX.OpenRecordsetRO("rst3",V.Local.sSql)
+				F.Intrinsic.Control.If(V.ODBC.conX!rst3.EOF,<>,True)
+					'if email exists, call Send Email Sub passing all relevant data
+					F.Intrinsic.Control.CallSub(Sendemail,"EMAIL",V.ODBC.conX!rst3.FieldValTrim!EMAIL,"ORDER_NO",V.ODBC.conX!rst2.FieldValTrim!ORDER_NO,"CUSTOMER",V.ODBC.conX!rst2.FieldValTrim!CUSTOMER,"NAME",V.ODBC.conX!rst2.FieldVal!NAME_CUSTOMER,"DATE_DUE",V.ODBC.conX!rst.FieldVal!DATE_DUE,"DATE_SHIPPED",V.ODBC.conX!rst.FieldValTrim!DATE_SHIPPED)
+				F.Intrinsic.Control.EndIf
+				F.ODBC.conX!rst3.Close
+			F.Intrinsic.Control.EndIf
+			F.ODBC.conX!rst2.Close
+		F.ODBC.conX!rst.MoveNext
+	F.Intrinsic.Control.Loop
+F.Intrinsic.Control.EndIf
+F.ODBC.conX!rst.Close
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("GetOrderInfo_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3950_EMAIL_EARLY_SHIPMENT.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.GetOrderInfo.End
+
+Program.Sub.SendEmail.Start
+F.Intrinsic.Control.SetErrorHandler("SendEmail_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+'Queue Message for Email Get From Address from early_shipments.cfg
+V.Local.sSubject.Declare(String)
+V.Local.sBody.Declare(String)
+V.Local.iUSer.Declare(Long)
+V.Local.sRet.Declare(String)
+'To: Sales Rep Email from Salespersons Table (Order_Header.Salesperson = Salespersons.ID where Order # = Shipment of Order#)
+
+'Subject:"Order:####### | Early Shipment Notification"
+
+'Email Body:
+'Order:######
+'Customer#-CustomerName
+'Due Date:(From Order Header)
+'Shipment Date:Current Date of Shipment processed
+
+F.Intrinsic.String.Build("Order:{0} | Early Shipment Notification",V.Args.ORDER_NO,V.Local.sSubject)
+F.Intrinsic.String.Build("Order:{0}{5}Customer:{1}-{2}{5}Due Date:{3}{5}Shipment Date:{4}{5}",V.Args.ORDER_NO,V.Args.CUSTOMER,V.Args.NAME,V.Args.DATE_DUE,V.Args.DATE_SHIPPED,V.Ambient.NewLine,V.Local.sBody)
+
+F.Global.Security.GetUserId(V.Caller.User,V.Caller.CompanyCode,V.Local.iUSer)
+'Queue Message for Courier
+F.Intrinsic.String.Build("{0}*!*{1}",V.Global.sFromEmail,V.Global.sFromName,V.Local.sRet)
+
+F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,V.Local.iUSer,V.Caller.Caller,V.Local.sSubject,V.Local.sRet,V.Args.EMAIL,V.Local.sBody)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("SendEmail_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3950_EMAIL_EARLY_SHIPMENT.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.SendEmail.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_EMAIL_EARLY_SHIPMENT$}$SUPERVSR$}$6/15/2015
+${$1$}$$}$$}$0$}$28532$}$Post-Save Shipment Screen$}$6/15/2015 4:03:29 PM$}$
+${$2$}$$}$$}$0$}$4$}$Configuration File$}$6/15/2015 4:03:29 PM$}$Global\Files\early_shipments.cfg to hold email address and name
+
+(ie. "John Smith:jsmith@company.com").
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$Program will work from the shipment module, after the final processing of a shipment, it will look to see if it was shipped before the due date, if it was shipped early an email will be sent to the sales rep from the Sales Order Header.
+**Program is reliant on an email address being stored for the Sales Rep, if no email is stored, there will be no email sent out.
+
+GAB Program - No Screens
+
+On the "Save" Process hook of Order Entry>Transactions>Shipments
+
+If the current shipment date is before the due date of that order then queue a message(Email) with the following:
+
+**From: Default Email Address from "3950_early_shipments.cfg" File
+
+To: Sales Rep Email from Salespersons Table (Order_Header.Salesperson = Salespersons.ID where Order # = Shipment of Order#)
+
+Subject: "Order:####### | Early Shipment Notification"
+
+Email Body:
+"Order:######
+Customer # - Customer Name
+Due Date:(From Order Header)
+Shipment Date: Current Date of Shipment processed
+
+process email and end program. no notifications or screens for this.
+******************************
+Configuration File:
+Make Configuration file to store one line of text "Email:Name" (ie. "John Smith:jsmith@company.com"). When building the email function, this will be the "From Email" parameter to pass. Just split this line on ":" and use those values in the email function.
+
+*********************************************
+**Default From Address: this will be in a configuration text file maintained by the customer: Global\Files\early_shipments.cfg, it will store the email address that will be the default from address for these notifications. this file can be maintained via notepad or any text editor, as long as it is saved as a .cfg file in this location.
+Program.Sub.Comments.End
+
